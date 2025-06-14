@@ -1,0 +1,5 @@
+# VirtualTA Knowledge Base API Configuration
+# Copy this file to .env and fill in your actual API key
+
+API_KEY=your_api_key_here
+PORT=8000 

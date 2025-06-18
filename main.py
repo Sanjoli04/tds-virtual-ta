@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, Form, UploadFile, File
+from fastapi import FastAPI, Request, UploadFile, File
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import base64
@@ -11,12 +11,10 @@ from PIL import Image
 import pytesseract
 from dotenv import load_dotenv
 from sklearn.metrics.pairwise import cosine_similarity
-import numpy as np
 
 load_dotenv()
 
 app = FastAPI()
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -25,26 +23,25 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Configuration
 TOKEN = os.getenv("AIPIPE_TOKEN")
 BASE_URL = "https://aipipe.org/openai/v1"
 EMBEDDING_MODEL = "text-embedding-3-small"
 CHAT_MODEL = "gpt-4o-mini"
 DB_PATH = "chunks.db"
-
 HEADERS = {
     "Authorization": f"Bearer {TOKEN}",
     "Content-Type": "application/json"
 }
 
+# Utility functions
 
 def get_embedding(text: str):
     payload = {"model": EMBEDDING_MODEL, "input": text}
-    try:
-        response = requests.post(f"{BASE_URL}/embeddings", headers=HEADERS, json=payload)
-        return response.json()["data"][0]["embedding"]
-    except Exception as e:
-        print("Embedding error:", e)
-        return None
+    response = requests.post(
+        f"{BASE_URL}/embeddings", headers=HEADERS, json=payload, timeout=15
+    )
+    return response.json()["data"][0]["embedding"]
 
 
 def get_top_chunks(query_embedding, top_k=3):
@@ -54,80 +51,85 @@ def get_top_chunks(query_embedding, top_k=3):
     rows = cur.fetchall()
     conn.close()
 
-    scored_chunks = []
-    for metadata_json, content, embedding_json in rows:
-        db_embedding = json.loads(embedding_json)
-        score = cosine_similarity([query_embedding], [db_embedding])[0][0]
-        scored_chunks.append((score, metadata_json, content))
+    scored = []
+    for metadata_json, content, emb_json in rows:
+        db_emb = json.loads(emb_json)
+        score = cosine_similarity([query_embedding], [db_emb])[0][0]
+        scored.append((score, metadata_json, content))
+    return sorted(scored, key=lambda x: -x[0])[:top_k]
 
-    return sorted(scored_chunks, key=lambda x: -x[0])[:top_k]
 
-
-def generate_answer(question: str, context_chunks: list):
-    context_text = "\n\n".join(chunk for _, _, chunk in context_chunks)
-
+def generate_answer(question: str, chunks: list):
+    context = "\n\n".join(c for _, _, c in chunks)
     messages = [
-        {"role": "system", "content": "You are a helpful assistant. Answer questions based only on the provided chunks."},
-        {"role": "user", "content": f"Context:\n{context_text}\n\nQuestion:\n{question}"}
+        {"role": "system", "content": "You are a helpful assistant. Answer only from the provided context."},
+        {"role": "user", "content": f"Context:\n{context}\n\nQuestion:\n{question}"}
     ]
-
-    payload = {
-        "model": CHAT_MODEL,
-        "messages": messages
-    }
-
-    response = requests.post(f"{BASE_URL}/chat/completions", headers=HEADERS, json=payload)
-    response_json = response.json()
-
-    return response_json["choices"][0]["message"]["content"]
+    payload = {"model": CHAT_MODEL, "messages": messages}
+    resp = requests.post(
+        f"{BASE_URL}/chat/completions", headers=HEADERS, json=payload, timeout=15
+    )
+    return resp.json()["choices"][0]["message"]["content"]
 
 
-def extract_text_from_base64(image_base64: str):
+def extract_text_from_base64(image_b64: str) -> str:
     try:
-        image_bytes = base64.b64decode(image_base64)
-        image = Image.open(io.BytesIO(image_bytes))
-        return pytesseract.image_to_string(image)
-    except Exception as e:
-        print("OCR error:", e)
+        data = base64.b64decode(image_b64)
+        img = Image.open(io.BytesIO(data))
+        return pytesseract.image_to_string(img)
+    except Exception:
         return ""
 
-
+# Combined endpoint: accepts JSON or form-data
 @app.post("/api")
-async def handle_request_form(
-    question: str = Form(..., description="Your question for the assistant"),
-    image: UploadFile = File(None, description="Optional image file")
-):
-    print("Received question:", question)
-
+async def api(request: Request):
+    ct = request.headers.get("content-type", "")
+    question = None
     image_b64 = None
-    if image:
-        image_bytes = await image.read()
-        image_b64 = base64.b64encode(image_bytes).decode("utf-8")
 
-    # Prepare full context
-    full_context = question
+    if "application/json" in ct:
+        body = await request.json()
+        question = body.get("question")
+        image_b64 = body.get("image")
+    elif "multipart/form-data" in ct:
+        form = await request.form()
+        question = form.get("question")
+        upload: UploadFile = form.get("image")
+        if upload:
+            img_bytes = await upload.read()
+            image_b64 = base64.b64encode(img_bytes).decode()
+    else:
+        return JSONResponse({"error": "Unsupported Content-Type"}, status_code=415)
+
+    if not question:
+        return JSONResponse({"error": "Missing 'question'"}, status_code=422)
+
+    # Build full context
+    full_ctx = question
     if image_b64:
-        extracted_text = extract_text_from_base64(image_b64)
-        full_context = f"{extracted_text}\n\n{question}"
+        ocr_text = extract_text_from_base64(image_b64)
+        full_ctx = f"{ocr_text}\n\n{question}" if ocr_text else question
 
-    query_embedding = get_embedding(full_context)
-    if not query_embedding:
-        return JSONResponse({"error": "Failed to get embedding"}, status_code=500)
+    # Retrieval
+    q_emb = get_embedding(full_ctx)
+    if not q_emb:
+        return JSONResponse({"error": "Embedding failed"}, status_code=500)
+    top = get_top_chunks(q_emb)
+    ans = generate_answer(question, top)
 
-    top_chunks = get_top_chunks(query_embedding)
-    final_answer = generate_answer(question, top_chunks)
+    # Format links output
+    links = [
+        {"title": json.loads(md)["title"], "url": json.loads(md).get("original_url", "")} 
+        for _, md, _ in top
+    ]
 
-    return {
-        "answer": final_answer,
-        "source_titles": [json.loads(md)["title"] for _, md, _ in top_chunks],
-        "original_urls": [json.loads(md).get("original_url") for _, md, _ in top_chunks]
-    }
+    return {"answer": ans, "links": links}
 
 @app.get("/")
 def home():
-    return {"message": "TDS TA Assistant API running. Use POST /api with question and optional image."}
-
+    return {"message": "TDS TA Assistant API up. POST /api with JSON or form-data."}
 
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+

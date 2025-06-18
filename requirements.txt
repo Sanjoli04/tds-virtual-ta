@@ -1,0 +1,8 @@
+python-dotenv
+markdownify
+requests
+openai
+langchain
+fastapi
+uvicorn
+pytesseract

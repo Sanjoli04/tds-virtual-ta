@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, UploadFile
+from fastapi import FastAPI, Request, Form, UploadFile, File
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import base64
@@ -36,6 +36,7 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
+
 def get_embedding(text: str):
     payload = {"model": EMBEDDING_MODEL, "input": text}
     try:
@@ -44,6 +45,7 @@ def get_embedding(text: str):
     except Exception as e:
         print("Embedding error:", e)
         return None
+
 
 def get_top_chunks(query_embedding, top_k=3):
     conn = sqlite3.connect(DB_PATH)
@@ -59,6 +61,7 @@ def get_top_chunks(query_embedding, top_k=3):
         scored_chunks.append((score, metadata_json, content))
 
     return sorted(scored_chunks, key=lambda x: -x[0])[:top_k]
+
 
 def generate_answer(question: str, context_chunks: list):
     context_text = "\n\n".join(chunk for _, _, chunk in context_chunks)
@@ -78,6 +81,7 @@ def generate_answer(question: str, context_chunks: list):
 
     return response_json["choices"][0]["message"]["content"]
 
+
 def extract_text_from_base64(image_base64: str):
     try:
         image_bytes = base64.b64decode(image_base64)
@@ -87,31 +91,20 @@ def extract_text_from_base64(image_base64: str):
         print("OCR error:", e)
         return ""
 
+
 @app.post("/api")
-async def handle_request(request: Request):
-    content_type = request.headers.get("content-type", "")
+async def handle_request_form(
+    question: str = Form(..., description="Your question for the assistant"),
+    image: UploadFile = File(None, description="Optional image file")
+):
+    print("Received question:", question)
 
-    question = None
     image_b64 = None
+    if image:
+        image_bytes = await image.read()
+        image_b64 = base64.b64encode(image_bytes).decode("utf-8")
 
-    if "application/json" in content_type:
-        body = await request.json()
-        question = body.get("question")
-        image_b64 = body.get("image")
-
-    elif "multipart/form-data" in content_type:
-        form = await request.form()
-        question = form.get("question")
-        image_file = form.get("image")
-        if image_file:
-            image_bytes = await image_file.read()
-            image_b64 = base64.b64encode(image_bytes).decode("utf-8")
-    else:
-        return JSONResponse({"error": "Unsupported content type"}, status_code=415)
-
-    if not question:
-        return JSONResponse({"error": "Missing 'question'"}, status_code=422)
-
+    # Prepare full context
     full_context = question
     if image_b64:
         extracted_text = extract_text_from_base64(image_b64)
@@ -133,6 +126,7 @@ async def handle_request(request: Request):
 @app.get("/")
 def home():
     return {"message": "TDS TA Assistant API running. Use POST /api with question and optional image."}
+
 
 if __name__ == "__main__":
     import uvicorn

@@ -6,3 +6,4 @@ langchain
 fastapi
 uvicorn
 pytesseract
+scikit-learn

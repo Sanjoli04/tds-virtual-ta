@@ -1,53 +1,57 @@
-# 🧠 TDS Virtual TA Assistant
+# 🧠 Virtual TA Assistant – AI-Powered Q&A System
+- An intelligent Question-Answering system built with FastAPI that allows users to ask questions via text or image. It uses OCR to extract text from images,          generates embeddings with OpenAI’s text-embedding-3-small, and responds with context-aware answers using gpt-4o-mini. This project implements Retrieval-Augmented   Generation (RAG) with a local SQLite database for document chunk search.
+###🔧 Features
+1. ✍️ Ask questions via text or image
+2. 🖼️ Image OCR support using Tesseract
+3. 📚 Retrieval using embedding similarity search
+4. 🤖 Contextual response generation using OpenAI GPT models
+5. ⚡ Supports form-data and JSON API requests
+6. 📦 SQLite used as a lightweight chunk store
+7. ☁️ Deployable on Vercel or Render
 
-A smart **TA (Teaching Assistant) helper** built using FastAPI that accepts **questions** and optionally an **image**, and returns an intelligent response using context-aware embeddings. Powered by **AIProxy** and OpenAI models like `gpt-4o-mini`.
+### 🚀 Tech Stack
+- FastAPI
+- Tesseract OCR (Pillow, pytesseract)
+- OpenAI (via AIProxy)
+- scikit-learn – cosine similarity
+- SQLite – document chunk embeddings
+- Base64 image handling
+- CORS-enabled API
 
----
+### 📦 API Usage
+- #### Endpoint: POST /api
+   - Send your question and optionally an image. The assistant will extract context and generate an answer.
 
-## ✨ Features
-
-- 🔍 Accepts user **questions** via JSON or HTML form
-- 🖼️ Supports **image input** (base64 encoded)
-- 🧾 Uses **OCR** (Tesseract) to extract text from images
-- 🧠 Generates **embeddings** using `text-embedding-3-small`
-- 🔗 Ranks related **document chunks** using cosine similarity
-- 🤖 Generates smart, context-based answers using `gpt-4o-mini`
-- 🌐 CORS-enabled for easy frontend access
-
----
-
-## 🛠️ Tech Stack
-
-- **FastAPI** (Python)
-- **OpenAI-compatible API** via [AIProxy](https://github.com/sanand0/aipipe)
-- **Tesseract OCR** for image text extraction
-- **SQLite** for embedding chunk storage
-- **scikit-learn** for similarity ranking
-
----
-
-## 🚀 How It Works
-
-1. User sends a **question** and optionally an **image**.
-2. If image is provided:
-   - Text is extracted via OCR.
-   - This text is appended to the question for context.
-3. The combined input is converted into an **embedding**.
-4. Embedding is matched against local `chunks.db` for top relevant content.
-5. Final answer is generated using `gpt-4o-mini` with the top chunks as context.
-
----
-
-## 📦 API Endpoints
-
-### `POST /api`
-
-Send a **question** with optional base64-encoded **image**.
-
-#### 🧾 JSON Request Format
+### 📄 JSON Example
 ```json
 {
-  "question": "What does this diagram explain?",
-  "image": "<optional base64-encoded image string>"
+  "question": "What is the use of DuckDB?",
+  "image": "<base64-image-string-optional>"
 }
 ```
+### 📋 Form-data Example
+| Field    | Type         | Description                  |
+|----------|--------------|------------------------------|
+| question | `str`        | Your question                |
+| image    | `UploadFile` | Optional image (PNG/JPG)     |
+
+
+### ✅ How It Works
+1. Accepts input (question + optional image)
+2. OCR processes image → extracts text (if image present)
+3. Text is embedded using `text-embedding-3-small`
+4. Top similar chunks from SQLite are retrieved
+5. `gpt-4o-mini` generates final response with context
+
+### 🧪 Example Output
+```vbnet
+Q: What is Ollama used for?
+A: Ollama is a tool to run LLMs locally. It can be used in place of cloud models...
+Sources: ["Ollama - Local LLMs", "TDS Docs"]
+```
+### 🧭 Deployment
+* #### Works with:
+
+    - ✅ Render (via render.yaml)
+
+    - ✅ Vercel (vercel.json for FastAPI with Python runtime)

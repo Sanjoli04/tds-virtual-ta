@@ -1,6 +1,8 @@
 from fastapi import FastAPI, Request, UploadFile, File
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.templating import Jinja2Templates
+from fastapi.staticfiles import StaticFiles
 import base64
 import os
 import io
@@ -23,6 +25,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Mount templates and static directories
+templates = Jinja2Templates(directory="templates")
+# app.mount("/static", StaticFiles(directory="static"), name="static")
+
 # Configuration
 TOKEN = os.getenv("AIPIPE_TOKEN")
 BASE_URL = "https://aipipe.org/openai/v1"
@@ -35,14 +41,12 @@ HEADERS = {
 }
 
 # Utility functions
-
 def get_embedding(text: str):
     payload = {"model": EMBEDDING_MODEL, "input": text}
     response = requests.post(
         f"{BASE_URL}/embeddings", headers=HEADERS, json=payload, timeout=15
     )
     return response.json()["data"][0]["embedding"]
-
 
 def get_top_chunks(query_embedding, top_k=3):
     conn = sqlite3.connect(DB_PATH)
@@ -58,7 +62,6 @@ def get_top_chunks(query_embedding, top_k=3):
         scored.append((score, metadata_json, content))
     return sorted(scored, key=lambda x: -x[0])[:top_k]
 
-
 def generate_answer(question: str, chunks: list):
     context = "\n\n".join(c for _, _, c in chunks)
     messages = [
@@ -70,7 +73,6 @@ def generate_answer(question: str, chunks: list):
         f"{BASE_URL}/chat/completions", headers=HEADERS, json=payload, timeout=15
     )
     return resp.json()["choices"][0]["message"]["content"]
-
 
 def extract_text_from_base64(image_b64: str) -> str:
     try:
@@ -117,19 +119,17 @@ async def api(request: Request):
     top = get_top_chunks(q_emb)
     ans = generate_answer(question, top)
 
-    # Format links output
     links = [
-        {"title": json.loads(md)["title"], "url": json.loads(md).get("original_url", "")} 
+        {"title": json.loads(md)["title"], "url": json.loads(md).get("original_url", "")}
         for _, md, _ in top
     ]
 
     return {"answer": ans, "links": links}
 
-@app.get("/")
-def home():
-    return {"message": "TDS TA Assistant API up. POST /api with JSON or form-data."}
+@app.get("/", response_class=HTMLResponse)
+async def home(request: Request):
+    return templates.TemplateResponse("index.html", {"request": request})
 
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
-
